@@ -116,6 +116,59 @@ func ScpDownload(session *ssh.Session, client *ssh.Client, src, dst string, limi
 	return session.Wait()
 }
 
+// ScpUpload uploads sourceFile to remote machine like native scp console app.
+// ported from github.com/appleboy/easyssh
+func ScpUpload(session *ssh.Session, client *ssh.Client, sourceFile, etargetFile string, limit int) error {
+	targetFile := filepath.Base(etargetFile)
+	src, srcErr := os.Open(sourceFile)
+
+	if srcErr != nil {
+		return srcErr
+	}
+
+	srcStat, statErr := src.Stat()
+
+	if statErr != nil {
+		return statErr
+	}
+
+	w, err := session.StdinPipe()
+	if err != nil {
+		return err
+	}
+
+	copyF := func() error {
+		_, err := fmt.Fprintln(w, "C0644", srcStat.Size(), targetFile)
+		if err != nil {
+			return err
+		}
+
+		if srcStat.Size() > 0 {
+			_, err = io.Copy(w, src)
+			if err != nil {
+				return err
+			}
+		}
+
+		_, err = fmt.Fprint(w, "\x00")
+		return err
+	}
+
+	copyErrC := make(chan error, 1)
+	go func() {
+		defer w.Close()
+		copyErrC <- copyF()
+	}()
+
+	err = session.Run(fmt.Sprintf("scp -tr %s", etargetFile))
+	if err != nil {
+		return err
+	}
+
+	err = <-copyErrC
+	return err
+}
+
 func ack(w io.Writer) error {
 	msg := []byte("\x00")
 	n, err := w.Write(msg)
